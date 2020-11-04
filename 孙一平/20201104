@@ -1,0 +1,138 @@
+import tensorflow as tf
+# from keras.datasets import cifar10
+from tensorflow.examples.tutorials.mnist import input_data
+from tqdm import tqdm
+import skimage.io as io
+import skimage.transform as transform
+import os
+import pandas as pd
+import numpy as np
+
+mnist = input_data.read_data_sets("MNIST_data", one_hot=True)
+batch_size = 128
+epochs = 100
+img_path = "../data/jpg"
+label_file = "../data/img_label.csv"
+img_df = pd.read_csv(label_file)
+# (X_train, y_train), (X_test, y_test) = cifar10.load_data()
+
+def load_data():
+    #use oxford flower17 dataset
+    X_imgs = []
+    y_label = []
+    for i in tqdm(range(len(img_df))):
+        img = transform.resize(image=io.imread(os.path.join(img_path, img_df.iloc[i, 0])), output_shape=(224,224))
+        X_imgs.append(img)
+        y_label.append(img_df.iloc[i,1]-1)
+    X_imgs = np.array(X_imgs)
+    y_label = tf.one_hot(y_label, depth=17)
+    return X_imgs, y_label
+
+def alexnet(x):
+    with tf.variable_scope("conv1") as scope:
+        kernel1 = tf.Variable(tf.truncated_normal(shape=[11, 11, 3, 96],stddev=0.1, name="kernel1"))
+        biases1 = tf.Variable(tf.constant(0, shape=[96], dtype=tf.float32), name="biases1")
+        c1 = tf.nn.conv2d(input=x, filter=kernel1, strides=[1,4,4,1], padding="VALID", name="conv")
+        c1 = tf.nn.bias_add(c1, biases1)
+
+        c1 = tf.nn.relu(c1)
+
+        lrn1 = tf.nn.local_response_normalization(c1)
+        m1 = tf.nn.max_pool(lrn1, ksize=(1, 3, 3, 1), strides=[1, 2, 2, 1], padding="VALID")
+
+    with tf.variable_scope("conv2") as scope:
+        kernel2 = tf.Variable(tf.truncated_normal(shape=[5,5,96,256], stddev=0.1), name="kernel2")
+        biases2 = tf.Variable(tf.constant(0, shape=[256], dtype=tf.float32), name="biases2")
+
+        c2 = tf.nn.conv2d(m1, filter=kernel2, strides=[1,1,1,1], padding="SAME")
+        c2 = tf.nn.bias_add(c2, biases2)
+
+        c2 = tf.nn.relu(c2)
+
+        lrn2 = tf.nn.local_response_normalization(c2)
+        m2 = tf.nn.max_pool(lrn2, ksize=(1, 3, 3, 1), strides=[1, 2, 2, 1], padding="VALID")
+
+    with tf.variable_scope("conv3") as scope:
+        kernel3 = tf.Variable(tf.truncated_normal(shape=[3,3,256,384], stddev=0.1), name="kernel3")
+        biases3 = tf.Variable(tf.constant(0, shape=[384], dtype=tf.float32), name="biases3")
+
+        c3 = tf.nn.conv2d(m2, filter=kernel3, strides=[1,1,1,1], padding="SAME")
+        c3 = tf.nn.bias_add(c3, biases3)
+
+        r3 = tf.nn.relu(c3)
+
+    with tf.variable_scope("conv4"):
+        kernel4 = tf.Variable(tf.truncated_normal(shape=[3, 3, 384, 384], stddev=0.1), name="kernel4")
+        biases4 = tf.Variable(tf.constant(0, shape=[384], dtype=tf.float32), name="biases4")
+
+        c4 = tf.nn.conv2d(r3, filter=kernel4, strides=[1, 1, 1, 1], padding="SAME")
+        c4 = tf.nn.bias_add(c4, biases4)
+
+        r4 = tf.nn.relu(c4)
+
+    with tf.variable_scope("conv5"):
+        kernel5 = tf.Variable(tf.truncated_normal(shape=[3, 3, 384, 256], stddev=0.1), name="kernel5")
+        biases5 = tf.Variable(tf.constant(0, shape=[256], dtype=tf.float32), name="biases5")
+
+        c5 = tf.nn.conv2d(r4, filter=kernel5, strides=[1, 1, 1, 1], padding="SAME")
+        c5 = tf.nn.bias_add(c5, biases5)
+
+        r5 = tf.nn.relu(c5)
+
+        m5 = tf.nn.max_pool(r5, ksize=(1,3,3,1),strides=[1,2,2,1], padding="VALID")
+
+    with tf.variable_scope("fc6"):
+        m5_shape_li = m5.get_shape().as_list()
+        with tf.variable_scope("flatten"):
+            flatten = tf.reshape(m5, shape=[-1, m5_shape_li[1]*m5_shape_li[2]*m5_shape_li[3]], name="flatten")
+        weight6 = tf.Variable(tf.truncated_normal(shape=[m5_shape_li[1]*m5_shape_li[2]*m5_shape_li[3], 4096]))
+        biases6 = tf.Variable(tf.constant(0, shape=[4096], dtype=tf.float32), name="biases6")
+
+        f6 = tf.matmul(flatten, weight6)+biases6
+        r6 = tf.nn.relu(f6)
+        d6 = tf.nn.dropout(r6, keep_prob=0.5)
+
+    with tf.variable_scope("fc7"):
+        weight7 = tf.Variable(tf.truncated_normal(shape=[4096, 4096]))
+        biases7 = tf.Variable(tf.constant(0, shape=[4096], dtype=tf.float32), name="biases6")
+
+        f7 = tf.matmul(d6, weight7) + biases7
+        r7 = tf.nn.relu(f7)
+        d7 = tf.nn.dropout(r7, keep_prob=0.5)
+
+    with tf.variable_scope("output"):
+        weight8 = tf.Variable(tf.truncated_normal(shape=[4096, 17]))
+        biases8 = tf.Variable(tf.constant(0, shape=[17], dtype=tf.float32), name="biases8")
+
+        f8 = tf.matmul(d7, weight8) + biases8
+        output = tf.nn.relu(f8)
+
+    return output
+
+if __name__ == "__main__":
+    with tf.variable_scope("input"):
+        x = tf.placeholder(dtype=tf.float32, shape=[None, 224, 224, 3])
+        y = tf.placeholder(dtype=tf.float32, shape=[None, 17])
+
+    predict = alexnet(x)
+    with tf.variable_scope("loss"):
+        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=predict, labels=y))
+
+    with tf.variable_scope("train"):
+        optimizer = tf.train.AdamOptimizer().minimize(loss)
+        correct_train = tf.equal(tf.arg_max(predict, 1), tf.arg_max(y, 1))
+        accuracy_train = tf.reduce_mean(tf.cast(correct_train, "float"))
+
+        with tf.Session() as sess:
+            saver = tf.summary.FileWriter("../log/", sess.graph)
+            sess.run(tf.global_variables_initializer())
+            X_all, y_all = load_data()
+            y_all = sess.run(y_all)
+            for epoch in tqdm(range(10)):
+                epoch_loss = 0
+                for i in range(int((len(img_df)-1) / batch_size) + 1):
+                    min_end = min(batch_size*(i+1), len(img_df))
+                    epoch_x, epoch_y = X_all[i*batch_size:min_end, :, :, :], y_all[i*batch_size:min_end,:]
+                    _, c = sess.run([optimizer, loss], feed_dict={x: epoch_x, y: epoch_y})
+                    epoch_loss += c
+                print "loss", epoch_loss
