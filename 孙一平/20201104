@@ -1,138 +1,111 @@
-import tensorflow as tf
-# from keras.datasets import cifar10
-from tensorflow.examples.tutorials.mnist import input_data
-from tqdm import tqdm
-import skimage.io as io
-import skimage.transform as transform
-import os
-import pandas as pd
-import numpy as np
+import torch
+import torch.nn as nn
+import torch.utils.data as Data
+import torchvision
+import matplotlib.pyplot as plt
 
-mnist = input_data.read_data_sets("MNIST_data", one_hot=True)
-batch_size = 128
-epochs = 100
-img_path = "../data/jpg"
-label_file = "../data/img_label.csv"
-img_df = pd.read_csv(label_file)
-# (X_train, y_train), (X_test, y_test) = cifar10.load_data()
+torch.manual_seed(1)
+# 设置超参数
+epoches = 2
+batch_size = 50
+learning_rate = 0.001
 
-def load_data():
-    #use oxford flower17 dataset
-    X_imgs = []
-    y_label = []
-    for i in tqdm(range(len(img_df))):
-        img = transform.resize(image=io.imread(os.path.join(img_path, img_df.iloc[i, 0])), output_shape=(224,224))
-        X_imgs.append(img)
-        y_label.append(img_df.iloc[i,1]-1)
-    X_imgs = np.array(X_imgs)
-    y_label = tf.one_hot(y_label, depth=17)
-    return X_imgs, y_label
+# 搭建CNN
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()   # 继承__init__功能
+        ## 第一层卷积
+        self.conv1 = nn.Sequential(
+            # 输入[1,28,28]
+            nn.Conv2d(
+                in_channels=1,    # 输入图片的高度
+                out_channels=16,  # 输出图片的高度
+                kernel_size=5,    # 5x5的卷积核，相当于过滤器
+                stride=1,         # 卷积核在图上滑动，每隔一个扫一次
+                padding=2,        # 给图外边补上0
+            ),
+            # 经过卷积层 输出[16,28,28] 传入池化层
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2)   # 经过池化 输出[16,14,14] 传入下一个卷积
+        )
+        ## 第二层卷积
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(
+                in_channels=16,    # 同上
+                out_channels=32,
+                kernel_size=5,
+                stride=1,
+                padding=2
+            ),
+            # 经过卷积 输出[32, 14, 14] 传入池化层
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2)  # 经过池化 输出[32,7,7] 传入输出层
+        )
+        ## 输出层
+        self.output = nn.Linear(in_features=32*7*7, out_features=10)
 
-def alexnet(x):
-    with tf.variable_scope("conv1") as scope:
-        kernel1 = tf.Variable(tf.truncated_normal(shape=[11, 11, 3, 96],stddev=0.1, name="kernel1"))
-        biases1 = tf.Variable(tf.constant(0, shape=[96], dtype=tf.float32), name="biases1")
-        c1 = tf.nn.conv2d(input=x, filter=kernel1, strides=[1,4,4,1], padding="VALID", name="conv")
-        c1 = tf.nn.bias_add(c1, biases1)
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)           # [batch, 32,7,7]
+        x = x.view(x.size(0), -1)   # 保留batch, 将后面的乘到一起 [batch, 32*7*7]
+        output = self.output(x)     # 输出[50,10]
+        return output
 
-        c1 = tf.nn.relu(c1)
 
-        lrn1 = tf.nn.local_response_normalization(c1)
-        m1 = tf.nn.max_pool(lrn1, ksize=(1, 3, 3, 1), strides=[1, 2, 2, 1], padding="VALID")
+# 下载MNist数据集
+train_data = torchvision.datasets.MNIST(
+    root="./mnist/",  # 训练数据保存路径
+    train=True,
+    transform=torchvision.transforms.ToTensor(),  # 数据范围已从(0-255)压缩到(0,1)
+    download=False,  # 是否需要下载
+)
+# print(train_data.train_data.size())   # [60000,28,28]
+# print(train_data.train_labels.size())  # [60000]
+# plt.imshow(train_data.train_data[0].numpy())
+# plt.show()
 
-    with tf.variable_scope("conv2") as scope:
-        kernel2 = tf.Variable(tf.truncated_normal(shape=[5,5,96,256], stddev=0.1), name="kernel2")
-        biases2 = tf.Variable(tf.constant(0, shape=[256], dtype=tf.float32), name="biases2")
+test_data = torchvision.datasets.MNIST(root="./mnist/", train=False)
+print(test_data.test_data.size())    # [10000, 28, 28]
+# print(test_data.test_labels.size())  # [10000, 28, 28]
+test_x = torch.unsqueeze(test_data.test_data, dim=1).type(torch.FloatTensor)[:2000]/255
+test_y = test_data.test_labels[:2000]
 
-        c2 = tf.nn.conv2d(m1, filter=kernel2, strides=[1,1,1,1], padding="SAME")
-        c2 = tf.nn.bias_add(c2, biases2)
+# 装入Loader中
+train_loader = Data.DataLoader(dataset=train_data, batch_size=batch_size, shuffle=True, num_workers=3)
 
-        c2 = tf.nn.relu(c2)
 
-        lrn2 = tf.nn.local_response_normalization(c2)
-        m2 = tf.nn.max_pool(lrn2, ksize=(1, 3, 3, 1), strides=[1, 2, 2, 1], padding="VALID")
+def main():
+    # cnn 实例化
+    cnn = CNN()
+    print(cnn)
 
-    with tf.variable_scope("conv3") as scope:
-        kernel3 = tf.Variable(tf.truncated_normal(shape=[3,3,256,384], stddev=0.1), name="kernel3")
-        biases3 = tf.Variable(tf.constant(0, shape=[384], dtype=tf.float32), name="biases3")
+    # 定义优化器和损失函数
+    optimizer = torch.optim.Adam(cnn.parameters(), lr=learning_rate)
+    loss_function = nn.CrossEntropyLoss()
 
-        c3 = tf.nn.conv2d(m2, filter=kernel3, strides=[1,1,1,1], padding="SAME")
-        c3 = tf.nn.bias_add(c3, biases3)
+    # 开始训练
+    for epoch in range(epoches):
+        print("进行第{}个epoch".format(epoch))
+        for step, (batch_x, batch_y) in enumerate(train_loader):
+            output = cnn(batch_x)  # batch_x=[50,1,28,28]
+            # output = output[0]
+            loss = loss_function(output, batch_y)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        r3 = tf.nn.relu(c3)
+            if step % 50 == 0:
+                test_output = cnn(test_x)  # [10000 ,10]
+                pred_y = torch.max(test_output, 1)[1].data.numpy()
+                # accuracy = sum(pred_y==test_y)/test_y.size(0)
+                accuracy = ((pred_y == test_y.data.numpy()).astype(int).sum()) / float(test_y.size(0))
+                print('Epoch: ', epoch, '| train loss: %.4f' % loss.data.numpy(), '| test accuracy: %.2f' % accuracy)
 
-    with tf.variable_scope("conv4"):
-        kernel4 = tf.Variable(tf.truncated_normal(shape=[3, 3, 384, 384], stddev=0.1), name="kernel4")
-        biases4 = tf.Variable(tf.constant(0, shape=[384], dtype=tf.float32), name="biases4")
 
-        c4 = tf.nn.conv2d(r3, filter=kernel4, strides=[1, 1, 1, 1], padding="SAME")
-        c4 = tf.nn.bias_add(c4, biases4)
-
-        r4 = tf.nn.relu(c4)
-
-    with tf.variable_scope("conv5"):
-        kernel5 = tf.Variable(tf.truncated_normal(shape=[3, 3, 384, 256], stddev=0.1), name="kernel5")
-        biases5 = tf.Variable(tf.constant(0, shape=[256], dtype=tf.float32), name="biases5")
-
-        c5 = tf.nn.conv2d(r4, filter=kernel5, strides=[1, 1, 1, 1], padding="SAME")
-        c5 = tf.nn.bias_add(c5, biases5)
-
-        r5 = tf.nn.relu(c5)
-
-        m5 = tf.nn.max_pool(r5, ksize=(1,3,3,1),strides=[1,2,2,1], padding="VALID")
-
-    with tf.variable_scope("fc6"):
-        m5_shape_li = m5.get_shape().as_list()
-        with tf.variable_scope("flatten"):
-            flatten = tf.reshape(m5, shape=[-1, m5_shape_li[1]*m5_shape_li[2]*m5_shape_li[3]], name="flatten")
-        weight6 = tf.Variable(tf.truncated_normal(shape=[m5_shape_li[1]*m5_shape_li[2]*m5_shape_li[3], 4096]))
-        biases6 = tf.Variable(tf.constant(0, shape=[4096], dtype=tf.float32), name="biases6")
-
-        f6 = tf.matmul(flatten, weight6)+biases6
-        r6 = tf.nn.relu(f6)
-        d6 = tf.nn.dropout(r6, keep_prob=0.5)
-
-    with tf.variable_scope("fc7"):
-        weight7 = tf.Variable(tf.truncated_normal(shape=[4096, 4096]))
-        biases7 = tf.Variable(tf.constant(0, shape=[4096], dtype=tf.float32), name="biases6")
-
-        f7 = tf.matmul(d6, weight7) + biases7
-        r7 = tf.nn.relu(f7)
-        d7 = tf.nn.dropout(r7, keep_prob=0.5)
-
-    with tf.variable_scope("output"):
-        weight8 = tf.Variable(tf.truncated_normal(shape=[4096, 17]))
-        biases8 = tf.Variable(tf.constant(0, shape=[17], dtype=tf.float32), name="biases8")
-
-        f8 = tf.matmul(d7, weight8) + biases8
-        output = tf.nn.relu(f8)
-
-    return output
+    test_output = cnn(test_x[:10])
+    pred_y = torch.max(test_output, 1)[1].data.numpy().squeeze()
+    print(pred_y)
+    print(test_y[:10])
 
 if __name__ == "__main__":
-    with tf.variable_scope("input"):
-        x = tf.placeholder(dtype=tf.float32, shape=[None, 224, 224, 3])
-        y = tf.placeholder(dtype=tf.float32, shape=[None, 17])
-
-    predict = alexnet(x)
-    with tf.variable_scope("loss"):
-        loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=predict, labels=y))
-
-    with tf.variable_scope("train"):
-        optimizer = tf.train.AdamOptimizer().minimize(loss)
-        correct_train = tf.equal(tf.arg_max(predict, 1), tf.arg_max(y, 1))
-        accuracy_train = tf.reduce_mean(tf.cast(correct_train, "float"))
-
-        with tf.Session() as sess:
-            saver = tf.summary.FileWriter("../log/", sess.graph)
-            sess.run(tf.global_variables_initializer())
-            X_all, y_all = load_data()
-            y_all = sess.run(y_all)
-            for epoch in tqdm(range(10)):
-                epoch_loss = 0
-                for i in range(int((len(img_df)-1) / batch_size) + 1):
-                    min_end = min(batch_size*(i+1), len(img_df))
-                    epoch_x, epoch_y = X_all[i*batch_size:min_end, :, :, :], y_all[i*batch_size:min_end,:]
-                    _, c = sess.run([optimizer, loss], feed_dict={x: epoch_x, y: epoch_y})
-                    epoch_loss += c
-                print "loss", epoch_loss
+    main()
